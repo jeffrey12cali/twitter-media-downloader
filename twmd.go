@@ -17,39 +17,33 @@ import (
 	"sync"
 	"time"
 
-	twitterscraper "github.com/imperatrona/twitter-scraper"
 	"github.com/mmpx12/optionparser"
+	twitterscraper "github.com/n0madic/twitter-scraper"
 	"golang.org/x/term"
-	"unicode/utf8"
 )
 
 var (
-	usr        string
-	format     string
-	formatName string
-	proxy      string
-	update     bool
-	onlyrtw    bool
-	vidz       bool
-	imgs       bool
-	urlOnly    bool
-	version    = "1.13.0"
-	scraper    *twitterscraper.Scraper
-	client     *http.Client
-	size       = "orig"
+	usr     string
+	proxy   string
+	update  bool
+	onlyrtw bool
+	vidz    bool
+	imgs    bool
+	urlOnly bool
+	version = "1.11.2"
+	scraper *twitterscraper.Scraper
+	client  *http.Client
+	size    = "orig"
 )
 
-func download(wg *sync.WaitGroup, url string, filetype string, output string, dwn_type string) {
+func download(wg *sync.WaitGroup, url string, filetype string, output string, dwn_type string, prename string) {
 	defer wg.Done()
 	segments := strings.Split(url, "/")
-	name := segments[len(segments)-1]
+	name := prename + "_" + segments[len(segments)-1]
 	re := regexp.MustCompile(`name=`)
 	if re.MatchString(name) {
 		segments := strings.Split(name, "?")
 		name = segments[len(segments)-2]
-	}
-	if format != "" {
-		name = formatName + "_" + name
 	}
 	if urlOnly {
 		fmt.Println(url)
@@ -77,10 +71,17 @@ func download(wg *sync.WaitGroup, url string, filetype string, output string, dw
 	defer f.Close()
 	if dwn_type == "user" {
 		if update {
-			if _, err := os.Stat(output + "/" + filetype + "/" + name); !errors.Is(err, os.ErrNotExist) {
-				fmt.Println(name + ": already exists")
-				return
-			}
+            if filetype == "rtimg" {
+                if _, err := os.Stat(output + "/img/RE-" + name); !errors.Is(err, os.ErrNotExist) {
+                    fmt.Println(name + ": already exists")
+                    os.Exit(0)
+                }
+            } else {
+                if _, err := os.Stat(output + "/" + filetype + "/" + name); !errors.Is(err, os.ErrNotExist) {
+                    fmt.Println(name + ": already exists")
+                    os.Exit(0)
+                }
+            }
 		}
 		if filetype == "rtimg" {
 			f, _ = os.Create(output + "/img/RE-" + name)
@@ -93,7 +94,7 @@ func download(wg *sync.WaitGroup, url string, filetype string, output string, dw
 		if update {
 			if _, err := os.Stat(output + "/" + name); !errors.Is(err, os.ErrNotExist) {
 				fmt.Println("File exist")
-				return
+                os.Exit(0)
 			}
 		}
 		f, _ = os.Create(output + "/" + name)
@@ -120,16 +121,19 @@ func videoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 				if rt || onlyrtw {
 					v := vidUrl(j)
 					wg.Add(1)
-					go download(&wg, v, "video", output, "user")
+                    fmt.Println("isRetweet -> video")
+					go download(&wg, v, "video", output, "user", tweet.RetweetedStatus.Username + "_" + tweet.RetweetedStatus.ID)
 				} else {
 					continue
 				}
 			} else if onlyrtw {
 				continue
-			}
-			v := vidUrl(j)
-			wg.Add(1)
-			go download(&wg, v, "video", output, "user")
+			} else {
+                v := vidUrl(j)
+                wg.Add(1)
+                fmt.Println("video")
+                go download(&wg, v, "video", output, "user", tweet.Username + "_" + tweet.ID)
+            }
 		}
 		wg.Wait()
 	}
@@ -154,7 +158,8 @@ func photoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 					url = i.URL
 				}
 				wg.Add(1)
-				go download(&wg, url, "img", output, "user")
+                fmt.Println("img")
+				go download(&wg, url, "img", output, "user", tweet.Username + "_" + tweet.ID)
 			}
 		}
 		wg.Wait()
@@ -162,9 +167,6 @@ func photoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 }
 
 func videoSingle(tweet *twitterscraper.Tweet, output string) {
-	if tweet == nil {
-		return
-	}
 	if len(tweet.Videos) > 0 {
 		wg := sync.WaitGroup{}
 		for _, i := range tweet.Videos {
@@ -172,10 +174,12 @@ func videoSingle(tweet *twitterscraper.Tweet, output string) {
 			v := vidUrl(j)
 			if usr != "" {
 				wg.Add(1)
-				go download(&wg, v, "rtvideo", output, "user")
+                fmt.Println("rtvideo")
+				go download(&wg, v, "rtvideo", output, "user", tweet.RetweetedStatus.Username + "_" + tweet.RetweetedStatus.ID)
 			} else {
 				wg.Add(1)
-				go download(&wg, v, "tweet", output, "tweet")
+                fmt.Println("tweet")
+				go download(&wg, v, "tweet", output, "tweet", tweet.Username + "_" + tweet.ID)
 			}
 		}
 		wg.Wait()
@@ -183,9 +187,6 @@ func videoSingle(tweet *twitterscraper.Tweet, output string) {
 }
 
 func photoSingle(tweet *twitterscraper.Tweet, output string) {
-	if tweet == nil {
-		return
-	}
 	if len(tweet.Photos) > 0 {
 		wg := sync.WaitGroup{}
 		for _, i := range tweet.Photos {
@@ -199,10 +200,12 @@ func photoSingle(tweet *twitterscraper.Tweet, output string) {
 				}
 				if usr != "" {
 					wg.Add(1)
-					go download(&wg, url, "rtimg", output, "user")
+                    fmt.Println("rtimg")
+					go download(&wg, url, "rtimg", output, "user", tweet.RetweetedStatus.Username + "_" + tweet.RetweetedStatus.ID)
 				} else {
 					wg.Add(1)
-					go download(&wg, url, "tweet", output, "tweet")
+                    fmt.Println("tweet")
+					go download(&wg, url, "tweet", output, "tweet", tweet.Username + "_" + tweet.ID)
 				}
 			}
 		}
@@ -251,9 +254,8 @@ func Login(twofa bool) {
 	}
 	if !scraper.IsLoggedIn() {
 		askPass(twofa)
-	} else {
-		fmt.Println("Logged in")
 	}
+
 }
 
 func singleTweet(output string, id string) {
@@ -262,16 +264,9 @@ func singleTweet(output string, id string) {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	if tweet == nil {
-		fmt.Println("Error retrieve tweet")
-		return
-	}
-	if format != "" {
-		getFormat(tweet)
-	}
 	if usr != "" {
 		if vidz {
-			videoSingle(tweet, output)
+			//videoSingle(tweet, output)
 		}
 		if imgs {
 			photoSingle(tweet, output)
@@ -280,129 +275,6 @@ func singleTweet(output string, id string) {
 		videoSingle(tweet, output)
 		photoSingle(tweet, output)
 	}
-}
-
-func getFormat(tweet interface{}) {
-	var formatNew string
-	var tweetResult *twitterscraper.TweetResult
-	var tweetObj *twitterscraper.Tweet
-
-	switch t := tweet.(type) {
-	case *twitterscraper.TweetResult:
-		tweetResult = t
-	case *twitterscraper.Tweet:
-		tweetObj = t
-	default:
-		fmt.Println("Invalid tweet type")
-		return
-	}
-
-	formatParts := strings.Split(format, " ")
-
-	pattern := `[/\\:*?\"<>|]`
-
-	regex, err := regexp.Compile(pattern)
-	if err != nil {
-		fmt.Println("Error compiling regular expression:", err)
-		return
-	}
-
-	processText := func(text string, remainingChars int) string {
-		result := ""
-		for _, char := range text {
-			charStr := string(char)
-			if regex.MatchString(charStr) {
-				if utf8.RuneCountInString(result)+1 > remainingChars {
-					break
-				}
-				result += "_"
-				remainingChars--
-			} else if utf8.RuneCountInString(result)+1 <= remainingChars {
-				result += charStr
-				remainingChars--
-			} else {
-				break
-			}
-		}
-		return result
-	}
-
-	processPart := func(part string) {
-		switch part {
-		case "{DATE}":
-			var timestamp int64
-			if tweetResult != nil {
-				timestamp = tweetResult.Timestamp
-			} else if tweetObj != nil {
-				timestamp = tweetObj.Timestamp
-			} else {
-				fmt.Println("Error converting timestamp:", err)
-				return
-			}
-			t := time.Unix(timestamp, 0)
-			if err != nil {
-				fmt.Println("Error converting timestamp:", err)
-				return
-			}
-			date := t.Format("2006-01-02")
-			formatNew += date
-
-		case "{NAME}":
-			if tweetResult != nil {
-				formatNew += tweetResult.Name
-			} else if tweetObj != nil {
-				formatNew += tweetObj.Name
-			}
-
-		case "{USERNAME}":
-			if tweetResult != nil {
-				formatNew += tweetResult.Username
-			} else if tweetObj != nil {
-				formatNew += tweetObj.Username
-			}
-
-		case "{TITLE}":
-			var text string
-			var remainingChars int
-
-			if tweetResult != nil {
-				text = strings.ReplaceAll(tweetResult.Text, "/", "_")
-				remainingChars = 255 - len(formatNew) - len(tweetResult.Name) - len(tweetResult.Username) - len(tweetResult.ID)
-			} else if tweetObj != nil {
-				text = strings.ReplaceAll(tweetObj.Text, "/", "_")
-				remainingChars = 251 - len(formatNew) - len(tweetObj.ID) - 4
-			}
-
-			if text == "" {
-				formatNew += ""
-			} else if remainingChars > 0 && len(text) > remainingChars {
-				formatNew += processText(text, remainingChars)
-			} else {
-				formatNew += text
-			}
-
-		case "{ID}":
-			if tweetResult != nil {
-				formatNew += tweetResult.ID
-			} else if tweetObj != nil {
-				formatNew += tweetObj.ID
-			}
-		default:
-			fmt.Println("Invalid format part")
-			return
-		}
-	}
-
-	for i, part := range formatParts {
-		processPart(part)
-
-		if i != len(formatParts)-1 {
-			formatNew += "_"
-		}
-	}
-
-	formatName = formatNew
-
 }
 
 func main() {
@@ -422,7 +294,6 @@ func main() {
 	op.On("-s", "--size SIZE", "Choose size between small|normal|large (default large)", &size)
 	op.On("-U", "--update", "Download missing tweet only", &update)
 	op.On("-o", "--output DIR", "Output directory", &output)
-	op.On("-f", "--file-format FORMAT", "Formatted name for the downloaded file, {DATE} {USERNAME} {NAME} {TITLE} {ID}", &format)
 	op.On("-L", "--login", "Login (needed for NSFW tweets)", &login)
 	op.On("-2", "--2fa", "Use 2fa", &twofa)
 	op.On("-p", "--proxy PROXY", "Use proxy (proto://ip:port)", &proxy)
@@ -432,7 +303,6 @@ func main() {
 	op.Exemple("twmd -u Spraytrains -o ~/Downlaods -R -U -n 300")
 	op.Exemple("twmd --proxy socks5://127.0.0.1:9050 -t 156170319961391104")
 	op.Exemple("twmd -t 156170319961391104")
-	op.Exemple("twmd -t 156170319961391104 -f \"{DATE} {ID}\"")
 	op.Parse()
 
 	if printversion {
@@ -455,14 +325,8 @@ func main() {
 		op.Help()
 		os.Exit(1)
 	}
-	var re = regexp.MustCompile(`{ID}|{DATE}|{NAME}|{USERNAME}|{TITLE}`)
-	if format != "" && !re.MatchString(format) {
-		fmt.Println("You must specify a format (-f --format)")
-		op.Help()
-		os.Exit(1)
-	}
 
-	re = regexp.MustCompile("small|normal|large")
+	re := regexp.MustCompile("small|normal|large")
 	if !re.MatchString(size) && size != "orig" {
 		print("Error in size, setting up to normal\n")
 		size = ""
@@ -522,22 +386,29 @@ func main() {
 	}
 	nbrs, _ := strconv.Atoi(nbr)
 	wg := sync.WaitGroup{}
+    // new code
+    counter := 0
+    fmt.Println(nbrs)
+    //end of new code
 	for tweet := range scraper.GetTweets(context.Background(), usr, nbrs) {
+        time.Sleep(1 * time.Second) //A little extra sleep during image acquisition
+        fmt.Println(counter)
 		if tweet.Error != nil {
+            wg.Wait() //Wait to prevent program from exiting during image acquisition
 			fmt.Println(tweet.Error)
 			os.Exit(1)
 		}
-		if format != "" {
-			getFormat(tweet)
-		}
 		if vidz {
+            time.Sleep(5 * time.Second) // Extra long sleep when acquiring video
 			wg.Add(1)
 			go videoUser(&wg, tweet, output, retweet)
 		}
 		if imgs {
+            time.Sleep(1 * time.Second) //A little extra sleep during image acquisition
 			wg.Add(1)
 			go photoUser(&wg, tweet, output, retweet)
 		}
+        counter += 1
 	}
 	wg.Wait()
 }
