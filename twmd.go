@@ -40,10 +40,10 @@ var (
 	datefmt = "2006-01-02"
 )
 
-func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string, output string, dwn_type string) {
+func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string, output string, dwn_type string, prename string) {
 	defer wg.Done()
 	segments := strings.Split(url, "/")
-	name := segments[len(segments)-1]
+	name := prename + "_" + segments[len(segments)-1]
 	re := regexp.MustCompile(`name=`)
 	if re.MatchString(name) {
 		segments := strings.Split(name, "?")
@@ -77,9 +77,23 @@ func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string
 	var f *os.File
 	if dwn_type == "user" {
 		if update {
-			if _, err := os.Stat(output + "/" + filetype + "/" + name); !errors.Is(err, os.ErrNotExist) {
-				fmt.Println(name + ": already exists")
-				return
+			if filetype == "rtimg" {
+				if _, err := os.Stat(output + "/img/RE-" + name); !errors.Is(err, os.ErrNotExist) {
+					fmt.Println("/img/RE-" + name + ": already exists")
+					os.Exit(0)
+				}
+			}
+			else if filetype == "rtvideo" {
+				if _, err := os.Stat(output + "/video/RE-" + name); !errors.Is(err, os.ErrNotExist) {
+					fmt.Println("/video/RE-" + name + ": already exists")
+					os.Exit(0)
+				}
+			}
+			else {
+				if _, err := os.Stat(output + "/" + filetype + "/" + name); !errors.Is(err, os.ErrNotExist) {
+					fmt.Println(name + ": already exists")
+					os.Exit(0)
+				}
 			}
 		}
 		if filetype == "rtimg" {
@@ -93,7 +107,8 @@ func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string
 		if update {
 			if _, err := os.Stat(output + "/" + name); !errors.Is(err, os.ErrNotExist) {
 				fmt.Println("File exist")
-				return
+				os.Exit(0)
+				//return
 			}
 		}
 		f, _ = os.Create(output + "/" + name)
@@ -112,7 +127,7 @@ func videoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 			if tweet.IsRetweet {
 				if rt || onlyrtw {
 					wg.Add(1)
-					go download(&wg, tweet, url, "video", output, "user")
+					go download(&wg, tweet, url, "rtvideo", output, "user", tweet.RetweetedStatus.Username + "_" + tweet.RetweetedStatus.ID)
 					continue
 				} else {
 					continue
@@ -121,7 +136,7 @@ func videoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 				continue
 			}
 			wg.Add(1)
-			go download(&wg, tweet, url, "video", output, "user")
+			go download(&wg, tweet, url, "video", output, "user", tweet.Username + "_" + tweet.ID)
 		}
 		wg.Wait()
 	}
@@ -146,7 +161,7 @@ func photoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 					url = i.URL
 				}
 				wg.Add(1)
-				go download(&wg, tweet, url, "img", output, "user")
+				go download(&wg, tweet, url, "img", output, "user", tweet.Username + "_" + tweet.ID)
 			}
 		}
 		wg.Wait()
@@ -163,10 +178,10 @@ func videoSingle(tweet *twitterscraper.Tweet, output string) {
 			url := strings.Split(i.URL, "?")[0]
 			if usr != "" {
 				wg.Add(1)
-				go download(&wg, tweet, url, "rtvideo", output, "user")
+				go download(&wg, tweet, url, "rtvideo", output, "user", tweet.RetweetedStatus.Username + "_" + tweet.RetweetedStatus.ID)
 			} else {
 				wg.Add(1)
-				go download(&wg, tweet, url, "tweet", output, "tweet")
+				go download(&wg, tweet, url, "tweet", output, "tweet", tweet.Username + "_" + tweet.ID)
 			}
 		}
 		wg.Wait()
@@ -189,10 +204,10 @@ func photoSingle(tweet *twitterscraper.Tweet, output string) {
 				}
 				if usr != "" {
 					wg.Add(1)
-					go download(&wg, tweet, url, "rtimg", output, "user")
+					go download(&wg, tweet, url, "rtimg", output, "user", tweet.RetweetedStatus.Username + "_" + tweet.RetweetedStatus.ID)
 				} else {
 					wg.Add(1)
-					go download(&wg, tweet, url, "tweet", output, "tweet")
+					go download(&wg, tweet, url, "tweet", output, "tweet", tweet.Username + "_" + tweet.ID)
 				}
 			}
 		}
@@ -558,7 +573,7 @@ func main() {
 		os.Exit(0)
 	}
 	if nbr == "" {
-		nbr = "3000"
+		nbr = "10000"
 	}
 	if output != "" {
 		output = output + "/" + usr
@@ -574,6 +589,10 @@ func main() {
 	nbrs, _ := strconv.Atoi(nbr)
 	wg := sync.WaitGroup{}
 
+	// New code
+	counter := 0
+	fmt.Println(nbrs)
+
 	var tweets <-chan *twitterscraper.TweetResult
 	if onlymtw {
 		tweets = scraper.GetMediaTweets(context.Background(), usr, nbrs)
@@ -582,18 +601,23 @@ func main() {
 	}
 
 	for tweet := range tweets {
+		fmt.Println(counter)
+		time.Sleep(5 * time.Second)
 		if tweet.Error != nil {
 			fmt.Println(tweet.Error)
 			os.Exit(1)
 		}
 		if vidz {
+			time.Sleep(5 * time.Second) // A little extra sleep during tweet rolling
 			wg.Add(1)
 			go videoUser(&wg, tweet, output, retweet)
 		}
 		if imgs {
+			time.Sleep(5 * time.Second) // A little extra sleep during tweet rolling
 			wg.Add(1)
 			go photoUser(&wg, tweet, output, retweet)
 		}
+		counter += 1
 	}
 	wg.Wait()
 }
