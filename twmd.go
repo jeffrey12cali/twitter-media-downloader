@@ -82,14 +82,12 @@ func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string
 					fmt.Println("/img/RE-" + name + ": already exists")
 					os.Exit(0)
 				}
-			}
-			else if filetype == "rtvideo" {
+			} else if filetype == "rtvideo" {
 				if _, err := os.Stat(output + "/video/RE-" + name); !errors.Is(err, os.ErrNotExist) {
 					fmt.Println("/video/RE-" + name + ": already exists")
 					os.Exit(0)
 				}
-			}
-			else {
+			} else {
 				if _, err := os.Stat(output + "/" + filetype + "/" + name); !errors.Is(err, os.ErrNotExist) {
 					fmt.Println(name + ": already exists")
 					os.Exit(0)
@@ -147,7 +145,16 @@ func photoUser(wait *sync.WaitGroup, tweet *twitterscraper.TweetResult, output s
 	wg := sync.WaitGroup{}
 	if len(tweet.Photos) > 0 || tweet.IsRetweet {
 		if tweet.IsRetweet && (rt || onlyrtw) {
-			singleTweet(output, tweet.ID)
+			originaltweet, err := scraper.GetTweet(tweet.ID)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+			if originaltweet == nil {
+				fmt.Println("Error retrieve tweet")
+				return
+			}
+			photoSingle(originaltweet, output)
 		}
 		for _, i := range tweet.Photos {
 			if onlyrtw || tweet.IsRetweet {
