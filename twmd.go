@@ -19,7 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	twitterscraper "github.com/imperatrona/twitter-scraper"
+	twitterscraper "github.com/jeffrey12cali/twitter-scraper"
 	"github.com/mmpx12/optionparser"
 )
 
@@ -241,7 +241,7 @@ func processCookieString(cookieStr string) []*http.Cookie {
 			Name:     name,
 			Value:    value,
 			Path:     "/",
-			Domain:   ".twitter.com",
+			Domain:   ".x.com",
 			Expires:  expiresTime,
 			HttpOnly: true,
 			Secure:   true,
