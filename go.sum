@@ -9,10 +9,8 @@ github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be/go.mod 
 github.com/google/go-cmp v0.5.9/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
-github.com/jeffrey12cali/twitter-scraper v0.0.0-20251219184201-81d801da862c h1:VwsSt8kdRvtS8FJUhj8Kr4xFAMg4IbThVhWwvsOwnyg=
-github.com/jeffrey12cali/twitter-scraper v0.0.0-20251219184201-81d801da862c/go.mod h1:3GlGSp/Vi6nrMNmDMoIH4a6yFOaStZWlYN5OuMA5q0g=
-github.com/jeffrey12cali/twitter-scraper v0.0.0-20251219195906-ce60ffe6cd24 h1:rm63dyBzyHG4o//Bk5yuZnKB5/vzse/ia+iiT0Akh7o=
-github.com/jeffrey12cali/twitter-scraper v0.0.0-20251219195906-ce60ffe6cd24/go.mod h1:3GlGSp/Vi6nrMNmDMoIH4a6yFOaStZWlYN5OuMA5q0g=
+github.com/jeffrey12cali/twitter-scraper v0.0.0-20260701135426-19c7be3f48e6 h1:96jZX4dwVui5SL4Aq9DzgT122ltFJ+x7zZJm5xiPROQ=
+github.com/jeffrey12cali/twitter-scraper v0.0.0-20260701135426-19c7be3f48e6/go.mod h1:3GlGSp/Vi6nrMNmDMoIH4a6yFOaStZWlYN5OuMA5q0g=
 github.com/mmpx12/optionparser v1.1.0 h1:CgfC8WBDxkHOlg9myndDMezNiyXeMzVRDLWDRIjdlf8=
 github.com/mmpx12/optionparser v1.1.0/go.mod h1:1Ub9+E2fDinPCmAU2lCuJcXE8x0HCmkurDv+lcXgRd8=
 github.com/n0madic/twitter-scraper v0.0.0-20231104223941-296710769dd8 h1:yToM7p7HL/WwEESkupFV3Nf7a8d80CHaKRoFNstGA2U=

@@ -4,7 +4,7 @@ go 1.23.4
 
 require (
 	github.com/andlabs/ui v0.0.0-20200610043537-70a69d6ae31e
-	github.com/jeffrey12cali/twitter-scraper v0.0.0-20251219195906-ce60ffe6cd24
+	github.com/jeffrey12cali/twitter-scraper v0.0.0-20260701135426-19c7be3f48e6
 	github.com/mmpx12/optionparser v1.1.0
 	github.com/n0madic/twitter-scraper v0.0.0-20231104223941-296710769dd8
 	github.com/sqweek/dialog v0.0.0-20240226140203-065105509627
