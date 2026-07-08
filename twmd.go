@@ -35,6 +35,7 @@ var (
 	imgs        bool
 	textMode    bool
 	metaMode    bool
+	deep        bool
 	urlOnly     bool
 	version     = "1.14.0"
 	scraper     *twitterscraper.Scraper
@@ -628,6 +629,77 @@ func loadSeenIDs(path string, kind string) map[string]bool {
 	return seen
 }
 
+// backfillOpts controls how a deep-mode search query is built.
+type backfillOpts struct {
+	retweets  bool // include native retweets (search omits them by default)
+	mediaOnly bool // restrict to tweets carrying media (mirrors -M)
+}
+
+// prevID returns id-1 as a string, for use as a `max_id:` upper bound one below
+// the oldest tweet already seen. Reports false when id is empty, zero, or not a
+// uint64. Snowflake IDs need the full 64-bit range, so parse as uint64.
+func prevID(id string) (string, bool) {
+	n, err := strconv.ParseUint(id, 10, 64)
+	if err != nil || n == 0 {
+		return "", false
+	}
+	return strconv.FormatUint(n-1, 10), true
+}
+
+// idLess reports whether a sorts before b numerically (snowflake IDs are
+// time-ordered as uint64). Unparseable IDs sort last so a valid ID always wins.
+func idLess(a, b string) bool {
+	na, erra := strconv.ParseUint(a, 10, 64)
+	nb, errb := strconv.ParseUint(b, 10, 64)
+	if erra != nil {
+		return false
+	}
+	if errb != nil {
+		return true
+	}
+	return na < nb
+}
+
+// buildBackfillQuery builds a search query that walks a user's history older
+// than maxID. Empty maxID omits the bound (first window).
+func buildBackfillQuery(user string, maxID string, opts backfillOpts) string {
+	q := "from:" + user
+	if maxID != "" {
+		q += " max_id:" + maxID
+	}
+	if opts.mediaOnly {
+		q += " filter:media"
+	}
+	if opts.retweets {
+		q += " include:nativeretweets"
+	}
+	return q
+}
+
+// applyWindow filters a fetched window against the run-level seen set: it marks
+// new IDs in seen, returns the not-yet-seen tweets, the lowest ID observed
+// (numerically, across old oldest and this batch), and the count of new tweets.
+// added==0 means the window was entirely duplicates — the signal to stop
+// backfilling. Pure: no I/O, so the download/write side effects stay in the loop.
+func applyWindow(seen map[string]bool, oldest string, tweets []*twitterscraper.Tweet) (newTweets []*twitterscraper.Tweet, newOldest string, added int) {
+	newOldest = oldest
+	for _, t := range tweets {
+		if t == nil || t.ID == "" {
+			continue
+		}
+		if newOldest == "" || idLess(t.ID, newOldest) {
+			newOldest = t.ID
+		}
+		if seen[t.ID] {
+			continue
+		}
+		seen[t.ID] = true
+		newTweets = append(newTweets, t)
+		added++
+	}
+	return newTweets, newOldest, added
+}
+
 type twmdState struct {
 	LastSeenID string `json:"last_seen_id"`
 	LastSeenTS int64  `json:"last_seen_ts"`
@@ -680,6 +752,7 @@ func main() {
 	op.On("-s", "--size SIZE", "Choose size between small|normal|large (default large)", &size)
 	op.On("-U", "--update", "Download missing tweet only", &update)
 	op.On("-I", "--incremental", "Stop at last-seen tweet (incremental per-account)", &incremental)
+	op.On("-D", "--deep", "Continue past timeline depth limit via search (requires login)", &deep)
 	op.On("-o", "--output DIR", "Output directory", &output)
 	op.On("-f", "--file-format FORMAT", "Formatted name for the downloaded file, {DATE} {USERNAME} {NAME} {TITLE} {ID}", &format)
 	op.On("-d", "--date-format FORMAT", "Apply custom date format. (https://go.dev/src/time/format.go)", &datefmt)
@@ -764,6 +837,11 @@ func main() {
 		Login(useCookies)
 	}
 
+	if deep && !scraper.IsLoggedIn() {
+		fmt.Println("deep mode (-D) requires login: pass -L or -C")
+		os.Exit(1)
+	}
+
 	if single != "" {
 		if output == "" {
 			output = "./"
@@ -812,30 +890,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var tweets <-chan *twitterscraper.TweetResult
-	if onlymtw {
-		tweets = scraper.GetMediaTweets(ctx, usr, nbrs)
-	} else {
-		tweets = scraper.GetTweets(ctx, usr, nbrs)
-	}
+	// processed tracks every tweet ID handled this run (primary stream + deep
+	// backfill) so the backfill never re-downloads or re-writes a tweet the
+	// primary stream already covered. oldestID is the lowest ID handled so far,
+	// used as the upper bound of the next backfill search window.
+	processed := map[string]bool{}
+	var oldestID string
 
-	for tweet := range tweets {
-		fmt.Println(counter)
-		time.Sleep(5 * time.Second)
-		if tweet.Error != nil {
-			fmt.Println("stream error:", tweet.Error)
-			break
-		}
-		if incremental && !tweet.IsPin {
-			if newestState.LastSeenID == "" {
-				newestState = twmdState{LastSeenID: tweet.ID, LastSeenTS: tweet.Timestamp}
-			}
-			if prevState.LastSeenID != "" && (tweet.ID == prevState.LastSeenID ||
-				(prevState.LastSeenTS > 0 && tweet.Timestamp <= prevState.LastSeenTS)) {
-				cancel()
-				break
-			}
-		}
+	// processTweet performs all per-tweet side effects: text, metadata, media
+	// downloads, and the run counter. Dedup and oldest-ID tracking are the
+	// caller's job (inline for the primary stream, applyWindow for backfill).
+	processTweet := func(tweet *twitterscraper.TweetResult) {
 		if textMode {
 			if wrote, err := appendText(output+"/tweets.txt", &tweet.Tweet, seenText); err != nil {
 				fmt.Println("text write error:", err)
@@ -862,6 +927,88 @@ func main() {
 		}
 		counter += 1
 	}
+
+	var tweets <-chan *twitterscraper.TweetResult
+	if onlymtw {
+		tweets = scraper.GetMediaTweets(ctx, usr, nbrs)
+	} else {
+		tweets = scraper.GetTweets(ctx, usr, nbrs)
+	}
+
+	// endedNaturally is true when the primary stream ran to completion (hit the
+	// timeline depth cap) rather than being stopped by an error or -I. Only then
+	// does deep backfill make sense.
+	endedNaturally := true
+	for tweet := range tweets {
+		fmt.Println(counter)
+		time.Sleep(5 * time.Second)
+		if tweet.Error != nil {
+			fmt.Println("stream error:", tweet.Error)
+			endedNaturally = false
+			break
+		}
+		if incremental && !tweet.IsPin {
+			if newestState.LastSeenID == "" {
+				newestState = twmdState{LastSeenID: tweet.ID, LastSeenTS: tweet.Timestamp}
+			}
+			if prevState.LastSeenID != "" && (tweet.ID == prevState.LastSeenID ||
+				(prevState.LastSeenTS > 0 && tweet.Timestamp <= prevState.LastSeenTS)) {
+				cancel()
+				endedNaturally = false
+				break
+			}
+		}
+		if tweet.ID != "" {
+			processed[tweet.ID] = true
+			if oldestID == "" || idLess(tweet.ID, oldestID) {
+				oldestID = tweet.ID
+			}
+		}
+		processTweet(tweet)
+	}
+
+	// Deep backfill: the primary timeline (UserTweets/UserMedia) is capped
+	// server-side at ~800-1000 entries. When -D is set and we still want more,
+	// walk older history via search windows bounded by max_id, stopping when a
+	// window yields no new tweets or we reach -n.
+	if deep && endedNaturally && counter < nbrs {
+		opts := backfillOpts{retweets: retweet || onlyrtw, mediaOnly: onlymtw}
+		fmt.Println("deep backfill: continuing past timeline depth limit via search")
+		scraper.SetSearchMode(twitterscraper.SearchLatest)
+		for counter < nbrs {
+			maxID := ""
+			if oldestID != "" {
+				if p, ok := prevID(oldestID); ok {
+					maxID = p
+				}
+			}
+			query := buildBackfillQuery(usr, maxID, opts)
+			var batch []*twitterscraper.Tweet
+			stop := false
+			for tr := range scraper.SearchTweets(ctx, query, nbrs-counter) {
+				if tr.Error != nil {
+					fmt.Println("deep search error:", tr.Error)
+					stop = true
+					break
+				}
+				t := tr.Tweet
+				batch = append(batch, &t)
+			}
+			newTweets, newOldest, added := applyWindow(processed, oldestID, batch)
+			for _, t := range newTweets {
+				if counter >= nbrs {
+					break
+				}
+				processTweet(&twitterscraper.TweetResult{Tweet: *t})
+			}
+			if added == 0 || newOldest == oldestID || stop {
+				break // no forward progress: end of reachable history
+			}
+			oldestID = newOldest
+			time.Sleep(2 * time.Second) // pace between windows
+		}
+	}
+
 	wg.Wait()
 
 	if incremental && newestState.LastSeenID != "" {
