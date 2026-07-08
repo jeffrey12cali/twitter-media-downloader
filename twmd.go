@@ -24,20 +24,21 @@ import (
 )
 
 var (
-	usr     string
-	format  string
-	proxy   string
-	update  bool
-	onlyrtw bool
-	onlymtw bool
-	vidz    bool
-	imgs    bool
-	urlOnly bool
-	version = "1.14.0"
-	scraper *twitterscraper.Scraper
-	client  *http.Client
-	size    = "orig"
-	datefmt = "2006-01-02"
+	usr         string
+	format      string
+	proxy       string
+	update      bool
+	incremental bool
+	onlyrtw     bool
+	onlymtw     bool
+	vidz        bool
+	imgs        bool
+	urlOnly     bool
+	version     = "1.14.0"
+	scraper     *twitterscraper.Scraper
+	client      *http.Client
+	size        = "orig"
+	datefmt     = "2006-01-02"
 )
 
 func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string, output string, dwn_type string, prename string) {
@@ -473,6 +474,38 @@ func getFormat(tweet interface{}) string {
 	return formatNew
 }
 
+type twmdState struct {
+	LastSeenID string `json:"last_seen_id"`
+	LastSeenTS int64  `json:"last_seen_ts"`
+}
+
+func stateFilePath(dir string) string {
+	return dir + "/.twmd_state.json"
+}
+
+func readState(dir string) twmdState {
+	var s twmdState
+	data, err := os.ReadFile(stateFilePath(dir))
+	if err != nil {
+		return s
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return twmdState{}
+	}
+	return s
+}
+
+func writeState(dir string, s twmdState) {
+	data, err := json.Marshal(s)
+	if err != nil {
+		fmt.Println("warning: could not encode incremental state:", err)
+		return
+	}
+	if err := os.WriteFile(stateFilePath(dir), data, 0644); err != nil {
+		fmt.Println("warning: could not write incremental state:", err)
+	}
+}
+
 func main() {
 	var nbr, single, output string
 	var retweet, all, printversion, nologo, login, useCookies bool
@@ -490,6 +523,7 @@ func main() {
 	op.On("-M", "--mediatweet-only", "Download only media tweet", &onlymtw)
 	op.On("-s", "--size SIZE", "Choose size between small|normal|large (default large)", &size)
 	op.On("-U", "--update", "Download missing tweet only", &update)
+	op.On("-I", "--incremental", "Stop at last-seen tweet (incremental per-account)", &incremental)
 	op.On("-o", "--output DIR", "Output directory", &output)
 	op.On("-f", "--file-format FORMAT", "Formatted name for the downloaded file, {DATE} {USERNAME} {NAME} {TITLE} {ID}", &format)
 	op.On("-d", "--date-format FORMAT", "Apply custom date format. (https://go.dev/src/time/format.go)", &datefmt)
@@ -500,6 +534,7 @@ func main() {
 	op.On("-B", "--no-banner", "Don't print banner", &nologo)
 	op.Exemple("twmd -u Spraytrains -o ~/Downloads -a -r -n 300")
 	op.Exemple("twmd -u Spraytrains -o ~/Downloads -R -U -n 300")
+	op.Exemple("twmd -u Spraytrains -o ~/Downloads -a -I -n 300")
 	op.Exemple("twmd --proxy socks5://127.0.0.1:9050 -t 156170319961391104")
 	op.Exemple("twmd -t 156170319961391104")
 	op.Exemple("twmd -t 156170319961391104 -f \"{DATE} {ID}\"")
@@ -563,6 +598,8 @@ func main() {
 
 	scraper = twitterscraper.New()
 	scraper.WithReplies(true)
+	scraper.WithDelay(2)
+	scraper.WithClientTimeout(30 * time.Second)
 	scraper.SetProxy(proxy)
 
 	// Modified login handling
@@ -600,19 +637,37 @@ func main() {
 	counter := 0
 	fmt.Println(nbrs)
 
+	var prevState, newestState twmdState
+	if incremental {
+		prevState = readState(output)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var tweets <-chan *twitterscraper.TweetResult
 	if onlymtw {
-		tweets = scraper.GetMediaTweets(context.Background(), usr, nbrs)
+		tweets = scraper.GetMediaTweets(ctx, usr, nbrs)
 	} else {
-		tweets = scraper.GetTweets(context.Background(), usr, nbrs)
+		tweets = scraper.GetTweets(ctx, usr, nbrs)
 	}
 
 	for tweet := range tweets {
 		fmt.Println(counter)
 		time.Sleep(5 * time.Second)
 		if tweet.Error != nil {
-			fmt.Println(tweet.Error)
-			os.Exit(1)
+			fmt.Println("stream error:", tweet.Error)
+			break
+		}
+		if incremental && !tweet.IsPin {
+			if newestState.LastSeenID == "" {
+				newestState = twmdState{LastSeenID: tweet.ID, LastSeenTS: tweet.Timestamp}
+			}
+			if prevState.LastSeenID != "" && (tweet.ID == prevState.LastSeenID ||
+				(prevState.LastSeenTS > 0 && tweet.Timestamp <= prevState.LastSeenTS)) {
+				cancel()
+				break
+			}
 		}
 		if vidz {
 			time.Sleep(5 * time.Second) // A little extra sleep during tweet rolling
@@ -627,4 +682,8 @@ func main() {
 		counter += 1
 	}
 	wg.Wait()
+
+	if incremental && newestState.LastSeenID != "" {
+		writeState(output, newestState)
+	}
 }
