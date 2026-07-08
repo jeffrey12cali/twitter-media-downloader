@@ -28,6 +28,7 @@ Usage:
 -s, --size=SIZE              Choose size between small|normal|large (default
                              large)
 -U, --update                 Download missing tweet only
+-I, --incremental            Stop at last-seen tweet (incremental per-account)
 -o, --output=DIR             Output directory
 -f, --file-format=FORMAT     Formatted name for the downloaded file, {DATE}
                              {USERNAME} {NAME} {TITLE} {ID}
@@ -56,6 +57,14 @@ To fetch as more tweets as possible, change the argument of `-n` to a bigger num
 You can use `-r|--retweet` to download retweets as well, or `-R|--retweet-only` to download retweet only
 
 `-U|--update` will only download missing media.
+
+`-I|--incremental` remembers the last-seen tweet per account (stored in
+`<output>/<user>/.twmd_state.json`) and stops walking the timeline as soon as
+it's reached on later runs, instead of scanning every tweet again:
+
+```sh
+twmd -u Spraytrains -o ~/Downloads -a -I -n 300
+```
 
 #### Download a single tweet:
 
