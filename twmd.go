@@ -33,6 +33,8 @@ var (
 	onlymtw     bool
 	vidz        bool
 	imgs        bool
+	textMode    bool
+	metaMode    bool
 	urlOnly     bool
 	version     = "1.14.0"
 	scraper     *twitterscraper.Scraper
@@ -339,6 +341,28 @@ func singleTweet(output string, id string) {
 		fmt.Println("Error retrieve tweet")
 		return
 	}
+	if textMode {
+		var seen map[string]bool
+		if update {
+			seen = loadSeenIDs(output+"/tweets.txt", "txt")
+		}
+		if wrote, err := appendText(output+"/tweets.txt", tweet, seen); err != nil {
+			fmt.Println("text write error:", err)
+		} else if wrote {
+			fmt.Println("Saved text " + tweet.ID)
+		}
+	}
+	if metaMode {
+		var seen map[string]bool
+		if update {
+			seen = loadSeenIDs(output+"/tweets.jsonl", "jsonl")
+		}
+		if wrote, err := appendMeta(output+"/tweets.jsonl", tweet, seen); err != nil {
+			fmt.Println("metadata write error:", err)
+		} else if wrote {
+			fmt.Println("Saved metadata " + tweet.ID)
+		}
+	}
 	if usr != "" {
 		if vidz {
 			videoSingle(tweet, output)
@@ -474,6 +498,136 @@ func getFormat(tweet interface{}) string {
 	return formatNew
 }
 
+type tweetMeta struct {
+	ID             string   `json:"id"`
+	Date           string   `json:"date"`
+	Username       string   `json:"username"`
+	Name           string   `json:"name"`
+	Text           string   `json:"text"`
+	Likes          int      `json:"likes"`
+	Retweets       int      `json:"retweets"`
+	Replies        int      `json:"replies"`
+	Views          int      `json:"views"`
+	Hashtags       []string `json:"hashtags"`
+	Mentions       []string `json:"mentions"`
+	URLs           []string `json:"urls"`
+	PermanentURL   string   `json:"permanent_url"`
+	IsRetweet      bool     `json:"is_retweet"`
+	IsReply        bool     `json:"is_reply"`
+	QuotedStatusID string   `json:"quoted_status_id"`
+	ConversationID string   `json:"conversation_id"`
+}
+
+// buildMeta maps a library Tweet to the curated metadata subset. Pure, no I/O.
+func buildMeta(t *twitterscraper.Tweet) tweetMeta {
+	mentions := make([]string, 0, len(t.Mentions))
+	for _, m := range t.Mentions {
+		mentions = append(mentions, m.Username)
+	}
+	return tweetMeta{
+		ID:             t.ID,
+		Date:           time.Unix(t.Timestamp, 0).Format(datefmt),
+		Username:       t.Username,
+		Name:           t.Name,
+		Text:           t.Text,
+		Likes:          t.Likes,
+		Retweets:       t.Retweets,
+		Replies:        t.Replies,
+		Views:          t.Views,
+		Hashtags:       t.Hashtags,
+		Mentions:       mentions,
+		URLs:           t.URLs,
+		PermanentURL:   t.PermanentURL,
+		IsRetweet:      t.IsRetweet,
+		IsReply:        t.IsReply,
+		QuotedStatusID: t.QuotedStatusID,
+		ConversationID: t.ConversationID,
+	}
+}
+
+// appendText appends a text block for t to path. Skips (returns false) when the
+// tweet has no text or its ID is already in seen. seen==nil disables dedup.
+func appendText(path string, t *twitterscraper.Tweet, seen map[string]bool) (bool, error) {
+	if t.Text == "" {
+		return false, nil
+	}
+	if seen != nil && seen[t.ID] {
+		return false, nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	date := time.Unix(t.Timestamp, 0).Format(datefmt)
+	block := fmt.Sprintf("=== %s | %s | @%s ===\n%s\n\n", t.ID, date, t.Username, t.Text)
+	if _, err := f.WriteString(block); err != nil {
+		return false, err
+	}
+	if seen != nil {
+		seen[t.ID] = true
+	}
+	return true, nil
+}
+
+// appendMeta appends one JSON line of curated metadata for t to path. Skips
+// (returns false) when its ID is already in seen. seen==nil disables dedup.
+func appendMeta(path string, t *twitterscraper.Tweet, seen map[string]bool) (bool, error) {
+	if seen != nil && seen[t.ID] {
+		return false, nil
+	}
+	js, err := json.Marshal(buildMeta(t))
+	if err != nil {
+		return false, err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(js, '\n')); err != nil {
+		return false, err
+	}
+	if seen != nil {
+		seen[t.ID] = true
+	}
+	return true, nil
+}
+
+var txtHeaderRe = regexp.MustCompile(`^=== (\S+) \|`)
+
+// loadSeenIDs reads already-recorded tweet IDs from an aggregated file. kind is
+// "txt" or "jsonl". A missing file yields an empty set (no error).
+func loadSeenIDs(path string, kind string) map[string]bool {
+	seen := make(map[string]bool)
+	f, err := os.Open(path)
+	if err != nil {
+		return seen
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if kind == "jsonl" {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			var m struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal([]byte(line), &m); err == nil && m.ID != "" {
+				seen[m.ID] = true
+			}
+		} else {
+			if g := txtHeaderRe.FindStringSubmatch(line); g != nil {
+				seen[g[1]] = true
+			}
+		}
+	}
+	return seen
+}
+
 type twmdState struct {
 	LastSeenID string `json:"last_seen_id"`
 	LastSeenTS int64  `json:"last_seen_ts"`
@@ -517,6 +671,8 @@ func main() {
 	op.On("-i", "--img", "Download images only", &imgs)
 	op.On("-v", "--video", "Download videos only", &vidz)
 	op.On("-a", "--all", "Download images and videos", &all)
+	op.On("-x", "--text", "Save tweet text to tweets.txt", &textMode)
+	op.On("-m", "--metadata", "Save tweet metadata to tweets.jsonl", &metaMode)
 	op.On("-r", "--retweet", "Download retweet too", &retweet)
 	op.On("-z", "--url", "Print media url without download it", &urlOnly)
 	op.On("-R", "--retweet-only", "Download only retweet", &onlyrtw)
@@ -532,6 +688,7 @@ func main() {
 	op.On("-p", "--proxy PROXY", "Use proxy (proto://ip:port)", &proxy)
 	op.On("-V", "--version", "Print version and exit", &printversion)
 	op.On("-B", "--no-banner", "Don't print banner", &nologo)
+	op.Exemple("twmd -u Spraytrains -o ~/Downloads -x -m -n 300")
 	op.Exemple("twmd -u Spraytrains -o ~/Downloads -a -r -n 300")
 	op.Exemple("twmd -u Spraytrains -o ~/Downloads -R -U -n 300")
 	op.Exemple("twmd -u Spraytrains -o ~/Downloads -a -I -n 300")
@@ -556,8 +713,8 @@ func main() {
 		vidz = true
 		imgs = true
 	}
-	if !vidz && !imgs && single == "" {
-		fmt.Println("You must specify what to download. (-i --img) for images, (-v --video) for videos or (-a --all) for both")
+	if !vidz && !imgs && !textMode && !metaMode && single == "" {
+		fmt.Println("You must specify what to download. (-i --img) for images, (-v --video) for videos, (-a --all) for both, (-x --text) for text or (-m --metadata) for metadata")
 		op.Help()
 		os.Exit(1)
 	}
@@ -630,6 +787,16 @@ func main() {
 	if imgs {
 		os.MkdirAll(output+"/img", os.ModePerm)
 	}
+	if textMode || metaMode {
+		os.MkdirAll(output, os.ModePerm)
+	}
+	var seenText, seenMeta map[string]bool
+	if textMode && update {
+		seenText = loadSeenIDs(output+"/tweets.txt", "txt")
+	}
+	if metaMode && update {
+		seenMeta = loadSeenIDs(output+"/tweets.jsonl", "jsonl")
+	}
 	nbrs, _ := strconv.Atoi(nbr)
 	wg := sync.WaitGroup{}
 
@@ -667,6 +834,20 @@ func main() {
 				(prevState.LastSeenTS > 0 && tweet.Timestamp <= prevState.LastSeenTS)) {
 				cancel()
 				break
+			}
+		}
+		if textMode {
+			if wrote, err := appendText(output+"/tweets.txt", &tweet.Tweet, seenText); err != nil {
+				fmt.Println("text write error:", err)
+			} else if wrote {
+				fmt.Println("Saved text " + tweet.ID)
+			}
+		}
+		if metaMode {
+			if wrote, err := appendMeta(output+"/tweets.jsonl", &tweet.Tweet, seenMeta); err != nil {
+				fmt.Println("metadata write error:", err)
+			} else if wrote {
+				fmt.Println("Saved metadata " + tweet.ID)
 			}
 		}
 		if vidz {
