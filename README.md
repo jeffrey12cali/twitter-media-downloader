@@ -29,6 +29,7 @@ Usage:
                              large)
 -U, --update                 Download missing tweet only
 -I, --incremental            Stop at last-seen tweet (incremental per-account)
+-D, --deep                   Continue past timeline depth limit via search (requires login)
 -o, --output=DIR             Output directory
 -f, --file-format=FORMAT     Formatted name for the downloaded file, {DATE}
                              {USERNAME} {NAME} {TITLE} {ID}
@@ -64,6 +65,18 @@ it's reached on later runs, instead of scanning every tweet again:
 
 ```sh
 twmd -u Spraytrains -o ~/Downloads -a -I -n 300
+```
+
+`-D|--deep` pushes past Twitter's timeline depth cap. The normal profile
+timeline (and the `-M` media timeline) is capped server-side at roughly
+800–1000 tweets — older media is unreachable through it. When the timeline ends
+before `-n` is reached, `-D` continues walking older history via search windows
+(`from:<user> max_id:<...>`), deduplicating against what was already fetched.
+It requires login (`-L` or `-C`); results are best-effort since search itself
+has coverage limits.
+
+```sh
+twmd -u Spraytrains -o ~/Downloads -a -D -L -n 3000
 ```
 
 #### Download a single tweet:
