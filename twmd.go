@@ -37,6 +37,7 @@ var (
 	version     = "1.14.0"
 	scraper     *twitterscraper.Scraper
 	client      *http.Client
+	newestState twmdState
 	size        = "orig"
 	datefmt     = "2006-01-02"
 )
@@ -81,16 +82,25 @@ func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string
 			if filetype == "rtimg" {
 				if _, err := os.Stat(output + "/img/RE-" + name); !errors.Is(err, os.ErrNotExist) {
 					fmt.Println("/img/RE-" + name + ": already exists")
+					if incremental && newestState.LastSeenID != "" {
+						writeState(output, newestState)
+					}
 					os.Exit(0)
 				}
 			} else if filetype == "rtvideo" {
 				if _, err := os.Stat(output + "/video/RE-" + name); !errors.Is(err, os.ErrNotExist) {
 					fmt.Println("/video/RE-" + name + ": already exists")
+					if incremental && newestState.LastSeenID != "" {
+						writeState(output, newestState)
+					}
 					os.Exit(0)
 				}
 			} else {
 				if _, err := os.Stat(output + "/" + filetype + "/" + name); !errors.Is(err, os.ErrNotExist) {
 					fmt.Println(name + ": already exists")
+					if incremental && newestState.LastSeenID != "" {
+						writeState(output, newestState)
+					}
 					os.Exit(0)
 				}
 			}
@@ -637,7 +647,7 @@ func main() {
 	counter := 0
 	fmt.Println(nbrs)
 
-	var prevState, newestState twmdState
+	var prevState twmdState
 	if incremental {
 		prevState = readState(output)
 	}
